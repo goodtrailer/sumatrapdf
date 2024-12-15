@@ -61,9 +61,6 @@ bool gNoFlickerRender = true;
 
 Kind kNotifAnnotation = "notifAnnotation";
 
-// Timer for mouse wheel smooth scrolling
-constexpr UINT_PTR kSmoothScrollTimerID = 6;
-
 // Smooth scrolling factor. This is a value between 0 and 1.
 // Each step, we scroll the needed delta times this factor.
 // Therefore, a higher factor makes smooth scrolling faster.
@@ -150,8 +147,12 @@ static void OnVScroll(MainWindow* win, WPARAM wp) {
     // scroll the window and update it
     if (si.nPos != currPos || msg == SB_THUMBTRACK) {
         if (gGlobalPrefs->smoothScroll) {
+            win->scrollSourceY = win->AsFixed()->yOffset();
             win->scrollTargetY = si.nPos;
-            SetTimer(win->hwndCanvas, kSmoothScrollTimerID, USER_TIMER_MINIMUM, nullptr);
+            win->useScrollDecay = msg == SB_THUMBTRACK;
+            win->scrollElapsedTime = 0;
+
+            SetEvent(win->scrollTimer);
         } else {
             win->AsFixed()->ScrollYTo(si.nPos);
         }
@@ -1870,20 +1871,47 @@ static void OnTimer(MainWindow* win, HWND hwnd, WPARAM timerId) {
         case kSmoothScrollTimerID:
             DisplayModel* dm = win->AsFixed();
 
-            int current = dm->yOffset();
+            int source = win->scrollSourceY;
             int target = win->scrollTargetY;
-            int delta = target - current;
 
-            if (delta == 0) {
-                KillTimer(hwnd, kSmoothScrollTimerID);
+            win->scrollElapsedTime += win->scrollTimerDeltaTime;
+            win->scrollTotalElapsedTime += win->scrollTimerDeltaTime;
+
+            if (win->useScrollDecay) {
+                int current = dm->yOffset();
+                int delta = target - current;
+
+                if (delta == 0) {
+                    win->scrollTotalElapsedTime = 0;
+                    ResetEvent(win->scrollTimer);
+                } else {
+                    // logf("Smooth scrolling from %d to %d (delta %d)\n", current, target, delta);
+
+                    double step = delta * gSmoothScrollingFactor;
+
+                    // Round away from zero
+                    int dy = step < 0 ? (int)floor(step) : (int)ceil(step);
+                    dm->ScrollYTo(current + dy);
+                }
             } else {
-                // logf("Smooth scrolling from %d to %d (delta %d)\n", current, target, delta);
+                int elapsed = win->scrollElapsedTime;
+                int total = gGlobalPrefs->smoothScrollDuration;
 
-                double step = delta * gSmoothScrollingFactor;
+                // reduce total scrolling time over time to 25%; makes long
+                // scrolling snappier, while keeping short scrolling smooth
+                total -= std::clamp(win->scrollTotalElapsedTime * 2, 0, total * 3 / 4);
 
-                // Round away from zero
-                int dy = step < 0 ? (int)floor(step) : (int)ceil(step);
-                dm->ScrollYTo(current + dy);
+                // quintic easing (https://easings.net is a good reference)
+                float t = std::clamp((float)elapsed / total, 0.f, 1.f);
+                float a = 1.f - t;
+                float interp = 1 - a * a * a * a * a;
+
+                dm->ScrollYTo((1 - interp) * source + interp * target);
+
+                if (t >= 1.f) {
+                    win->scrollTotalElapsedTime = 0;
+                    ResetEvent(win->scrollTimer);
+                }
             }
             break;
     }

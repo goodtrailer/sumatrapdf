@@ -212,9 +212,24 @@ struct MainWindow {
 
     DocControllerCallback* cbHandler = nullptr;
 
-    // The target y offset for smooth scrolling.
+    // Seprate scroll thread for higher precision scrolling updates
+    HANDLE scrollTimerThread = nullptr;
+    bool scrollTimerCancelled = false;
+    HANDLE scrollTimer = nullptr;
+    int scrollTimerDeltaTime = 0;
+
+    // The target/source y offset for smooth scrolling.
     // We use a timer to gradually scroll there.
     int scrollTargetY = 0;
+    int scrollSourceY = 0;
+
+    // For touchpad smooth scrolling, use decaying velocity
+    bool useScrollDecay = false;
+
+    // For mousewheel smooth scrolling, the current/total elapsed time in ms
+    // Used for calculating the easing
+    int scrollElapsedTime = 0;
+    int scrollTotalElapsedTime = 0;
 
     /* when doing a forward search, the result location is highlighted with
      * rectangular marks in the document. These variables indicate the position of the markers
